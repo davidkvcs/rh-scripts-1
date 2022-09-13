@@ -10,6 +10,8 @@ from skimage import measure
 import collections
 import numpy as np
 from scipy.spatial import distance
+import torchio as tio
+from scipy.spatial import cKDTree
 
 def dice_similarity(arr1: np.ndarray, arr2: np.ndarray) -> float:
     """
@@ -113,3 +115,41 @@ def hausdorff_distance( arr1: np.ndarray, arr2: np.ndarray, axial_orientation: i
             max_distance = max( max_distance, hausdorff_distance(u,v) )
         return max_distance
     return max(distance.directed_hausdorff(arr1, arr2)[0], distance.directed_hausdorff(arr2, arr1)[0])
+
+def hausdorff_distance_with_resampling(lab1_nii, lab2_nii):
+    '''
+    Code copied from 
+    https://github.com/voreille/hecktor/blob/master/src/evaluation/scores.py
+
+    DGK 13-dep-2022: I added a resampling step of resampling to 1x1x1mm.
+    This ensures that the return value is a physical distance in mm.
+
+    Input should be binary nifti files. 
+
+    TODO: in case lab1 and lab2 include a different number of slices after resampling to 1x1x1mm, need to resample lab1 like lab2 first.
+    '''
+
+    transform = tio.Resample(1)
+    lab1 = tio.LabelMap(lab1_nii)
+    lab2 = tio.ScalarImage(lab2_nii)
+    lab1_transformed = transform(lab1)
+    lab2_transformed = transform(lab2)
+    lab1_t_np = np.squeeze(lab1_transformed.numpy())
+    lab2_t_np = np.squeeze(lab2_transformed.numpy())
+    
+    if lab1_t_np.shape == lab2_t_np.shape:
+        a_points = np.transpose(np.nonzero(lab1_t_np))
+        b_points = np.transpose(np.nonzero(lab2_t_np))
+
+        # Handle empty sets properly:
+        # - if both sets are empty, return zero
+        # - if only one set is empty, return infinity
+        if len(a_points) == 0:
+            return 0 if len(b_points) == 0 else np.inf
+        elif len(b_points) == 0:
+            return np.inf
+
+        return max(max(cKDTree(a_points).query(b_points, k=1)[0]),
+                   max(cKDTree(b_points).query(a_points, k=1)[0]))
+    else:
+        return 'Check manually. Shapes not equal.'
